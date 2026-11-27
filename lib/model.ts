@@ -47,7 +47,7 @@ export interface Snapshot {
 }
 
 /** The model's version label: the dashboard names it and board.json carries it. */
-export const MODEL_VERSION = 'fitted-odds-2';
+export const MODEL_VERSION = 'fitted-odds-3';
 
 /** Farm-plan economics at the dashboard's default controls. The page ships these and recomputes
  *  every verdict live when a reader moves a control; the board's printed verdicts use them too. */
@@ -863,6 +863,7 @@ export interface RadarData {
   model: {
     value: { use_size: boolean; flat: number; beta: number[]; terms: ValueTerm[]; cat_effects: Record<string, number>; median_years: number };
     odds: { beta: number[]; terms: OddsTerm[]; cat_offsets: Record<string, number>; median_years: number };
+    conformal: { q10: number; q25: number; q75: number; q90: number; cal_n: number };
   };
   watchlist_size: number;
   board_size: number;
@@ -937,10 +938,28 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
   const wfMiss = missFactor(wfTest.map((r) => r.lnCap), wfTest.map((r) => vPredict(wfFit, r)));
   const wfResidSd = sd(datedV.slice(0, vHalf).map((r) => r.lnCap - vPredict(wfFit, r)));
   const cover = (errs: number[], s: number, z: number): number => Math.round(100 * mean(errs.map((e) => (Math.abs(e) <= z * s ? 1 : 0))));
+  // Conformal calibration of the printed ranges. The widths come from the
+  // empirical quantiles of the leave-one-out residuals across all traded
+  // tokens — each residual is out-of-sample for its own token (its model never
+  // saw it), so this is cross-conformal, not a fit to the errors it measures.
+  // The normal bands the previous version used covered 85% leave-one-out but
+  // only 71% walk-forward at the stated 80%: the errors are not normal, and
+  // the earlier-listed half alone is too easy to calibrate on (it gave 63%).
+  const calSorted = [...looErr].sort((a, b) => a - b);
+  // Finite-sample conformal quantile: the ceil(level * (n + 1))-th smallest residual.
+  const confQ = (level: number): number => {
+    const k = Math.min(calSorted.length, Math.max(1, Math.ceil(level * (calSorted.length + 1))));
+    return calSorted[k - 1]!;
+  };
+  const q10 = confQ(0.10);
+  const q25 = confQ(0.25);
+  const q75 = confQ(0.75);
+  const q90 = confQ(0.90);
+  const inBand = (errs: number[], lo: number, hi: number): number => Math.round(100 * mean(errs.map((e) => (e >= lo && e <= hi ? 1 : 0))));
   const honesty = [
     { label: 'within ×3 of the model', stated: '—', loo: Math.round(100 * mean(looErr.map((e) => (Math.abs(e) <= Math.log(3) ? 1 : 0)))), wf: Math.round(100 * mean(wfErr.map((e) => (Math.abs(e) <= Math.log(3) ? 1 : 0)))) },
-    { label: 'inside P25–P75', stated: '50%', loo: cover(looErr, residSd, 0.674), wf: cover(wfErr, wfResidSd, 0.674) },
-    { label: 'inside P10–P90', stated: '80%', loo: cover(looErr, residSd, 1.282), wf: cover(wfErr, wfResidSd, 1.282) },
+    { label: 'inside P25–P75', stated: '50%', loo: inBand(looErr, q25, q75), wf: inBand(wfErr, q25, q75) },
+    { label: 'inside P10–P90', stated: '80%', loo: inBand(looErr, q10, q90), wf: inBand(wfErr, q10, q90) },
   ];
   // Final odds validation: ten-fold out-of-fold Brier for the shipped procedure.
   const oof = new Array(oRows.length).fill(0);
@@ -1013,8 +1032,11 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     const model = {
       value_if_usd: Math.round(s.vif),
       odds: round4(s.odds),
-      p25_usd: Math.round(quantile(imps, 0.25)),
-      p75_usd: Math.round(quantile(imps, 0.75)),
+      // Printed range: the bootstrap spread (parameter uncertainty) widened by
+      // the split-conformal residual quantiles (outcome noise), so the range a
+      // reader sees is the range the honesty panel actually measures.
+      p25_usd: Math.round(quantile(imps, 0.25) * Math.exp(q25)),
+      p75_usd: Math.round(quantile(imps, 0.75) * Math.exp(q75)),
       rank_lo: Math.round(quantile(ranks, 0.25)),
       rank_hi: Math.round(quantile(ranks, 0.75)),
       deposit_usd: econ.deposit,
@@ -1077,7 +1099,8 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
   const reading =
     `Reading it: ${droppedValue.length ? `${joinList(droppedValue)} fail to price a token better held-out, so the value model leaves them out; ` : ''}` +
     `${keptOddsLabels.length ? `${joinList(keptOddsLabels)} help tell which peers record a token, so they enter through the odds. ` : ''}` +
-    `The odds are the peers' record (${peersToken} of ${oRows.length} record a token) — not a forecast: this page never says a token will launch.`;
+    `The odds are the peers' record (${peersToken} of ${oRows.length} record a token) — not a forecast: this page never says a token will launch. ` +
+    `The printed ranges are conformal: their widths are the empirical quantiles of leave-one-out errors across all traded tokens, so the honesty panel measures the ranges as printed, not a normal approximation.`;
 
   const live = liveRows(snapshot);
   const radar: RadarData = {
@@ -1127,6 +1150,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
         beta: oFit.beta, terms: oLadder.kept.terms,
         cat_offsets: Object.fromEntries(oFit.catOffsets), median_years: oFit.medianYears,
       },
+      conformal: { q10: round4(q10), q25: round4(q25), q75: round4(q75), q90: round4(q90), cal_n: looErr.length },
     },
     watchlist_size: snapshot.watchlist.length,
     board_size: board.length,
