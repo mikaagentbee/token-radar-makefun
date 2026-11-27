@@ -130,8 +130,12 @@ td .sub2 { color: var(--faint); font-size: 10.5px; font-family: var(--font-num);
 .verdict.SKIP { background: rgba(246, 109, 93, 0.13); color: #ffb3ab; }
 td.verd .sub2 { display: block; margin-top: 2px; }
 
-/* detail */
-.detail { margin-top: 10px; }
+/* detail: a centred overlay, so a protocol's detail view stands on its own
+   above the board instead of trailing it at the foot of a 198-row page. */
+.detail { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: min(1060px, 96vw); max-height: 94vh; overflow-y: auto; overscroll-behavior: contain;
+  z-index: 60; margin-top: 0;
+  box-shadow: 0 0 0 100vmax rgba(2, 5, 10, 0.66), 0 24px 80px rgba(0, 0, 0, 0.6); }
 .detail .d-head { display: flex; justify-content: space-between; align-items: baseline; padding: 9px 12px 0; }
 .detail .d-head h2 { font-size: 16px; }
 .detail .d-head .close { background: none; border: 0; color: var(--muted); font-size: 15px; }

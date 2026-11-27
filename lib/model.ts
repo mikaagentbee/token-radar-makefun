@@ -47,7 +47,7 @@ export interface Snapshot {
 }
 
 /** The model's version label: the dashboard names it and board.json carries it. */
-export const MODEL_VERSION = 'fitted-odds-3';
+export const MODEL_VERSION = 'fitted-odds-4';
 
 /** Farm-plan economics at the dashboard's default controls. The page ships these and recomputes
  *  every verdict live when a reader moves a control; the board's printed verdicts use them too. */
